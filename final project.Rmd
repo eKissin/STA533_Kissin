@@ -1,0 +1,195 @@
+---
+output: html_document
+runtime: shiny
+---
+
+
+
+```{r}
+library(tidyverse)
+library(shiny)
+library(ggpubr)
+
+```
+
+
+```{r}
+lit_rt <- read.csv("https://raw.githubusercontent.com/eKissin/STA533_Kissin/main/adult_lit_rate_2018.csv")
+agri_prc <- read.csv("https://raw.githubusercontent.com/eKissin/STA533_Kissin/main/agri_land_percent_2018.csv")
+life_expec <- read.csv("https://raw.githubusercontent.com/eKissin/STA533_Kissin/main/life_expectancy_at_birth_2018.csv")
+ref_pop <- read.csv("https://raw.githubusercontent.com/eKissin/STA533_Kissin/main/refugee_population_by_country_of_asylum_2018.csv")
+rural_pop_prc <- read.csv("https://raw.githubusercontent.com/eKissin/STA533_Kissin/main/rural_pop_total_percent_2018.csv")
+tot_pop <-read.csv("https://raw.githubusercontent.com/eKissin/STA533_Kissin/main/total_population_2018.csv")
+urbn_pop_prc <- read.csv("https://raw.githubusercontent.com/eKissin/STA533_Kissin/main/urban_pop_total_2018.csv")
+slums_prc_urbn <- read.csv("https://raw.githubusercontent.com/eKissin/STA533_Kissin/main/urban_slums_pop_2018.csv")
+
+```
+
+
+```{r}
+lit_rt <- lit_rt%>%rename(country = ï..Country.Name)
+life_expec <- life_expec%>%rename(country = Country.Name)
+a <- inner_join(lit_rt, life_expec, by=c("country", "Country.Code"))
+ref_pop <- ref_pop%>%rename(country = ï..Country.Name)
+b <- inner_join(a, ref_pop, by=c("country", "Country.Code"))
+rural_pop_prc <- rural_pop_prc%>%rename(country = ï..Country.Name)
+c <- inner_join(b, rural_pop_prc, by=c("country", "Country.Code"))
+d <- inner_join(c, tot_pop, by=c("Country.Code"))
+urbn_pop_prc <- urbn_pop_prc%>%rename(country=Country.Name)
+e <- inner_join(d, urbn_pop_prc, by=c("country", "Country.Code"))
+df <- e%>%select(c(country, Life.Expectancy.Years, refugee.population.country.asylum, Rural.Population.Percent, Total.Population, Urban.Pop.Percent, Literacy.Rate.2018))
+df <- df%>%rename(life_exp=Life.Expectancy.Years)%>%rename(rural_pop=Rural.Population.Percent)%>%rename(urbn_pop=Urban.Pop.Percent)%>%mutate(ref_perc=refugee.population.country.asylum/Total.Population)%>%select(-c(refugee.population.country.asylum, Total.Population))%>%rename(lit_rate=Literacy.Rate.2018)
+df
+```
+
+basic eda to begin to address the question
+the variable of interest is Refugee Percent
+```{r}
+#there look to be three outliers, lets see what those are 
+df[order(-df$ref_perc),]
+#apparently, the countries/territories with the highest asylum seekers/refugees is West Bank and Gaza, Jordan, and Lebanon. Upon some minor internet research, it would appear that most of the refugees in these places are Palestinian refugees, and further that the literacy rate in Palestine is 97.5%
+#making a new dataset excluding these three, just to see what the graphs would look like
+h <- df%>%filter(ref_perc<0.1)
+h[order(-h$ref_perc),]
+```
+
+
+
+```{r}
+#plots
+#refugee percent by adult literacy
+ggplot(df, aes(ref_perc, lit_rate))+geom_point()+geom_smooth(se=FALSE, method='lm')
+ggplot(h, aes(ref_perc, lit_rate))+geom_point()+geom_smooth(se=FALSE, method='lm')
+#refugee percent by life expectancy
+ggplot(df, aes(ref_perc, life_exp))+geom_point()+geom_smooth(se=FALSE, method='lm')
+ggplot(h, aes(ref_perc, life_exp))+geom_point()+geom_smooth(se=FALSE, method='lm')
+#refugee percent by rural population
+ggplot(df, aes(ref_perc, rural_pop))+geom_point()+geom_smooth(se=FALSE, method='lm')
+ggplot(h, aes(ref_perc, rural_pop))+geom_point()+geom_smooth(se=FALSE, method='lm')
+#refugee percent by urban population
+ggplot(df, aes(ref_perc, urbn_pop))+geom_point()+geom_smooth(se=FALSE, method='lm')
+ggplot(h, aes(ref_perc, urbn_pop))+geom_point()+geom_smooth(se=FALSE, method='lm')
+```
+
+I need two categorical variables, so I will make abv_lit, which is 1 for if the country has above average adult literacy and 0 if not, and abv_life with the same for average life expectancy
+```{r}
+#get the average of literacy and life expectancy
+j <- df%>%select(-country)
+l <- colMeans(j, na.rm = TRUE)
+#using ifelse to create the dummy vars
+#literacy first
+k <- ifelse(df$lit_rate>l[1], 1, 0)
+#next life expectancy
+m <- ifelse(df$life_exp>l[2], 1, 0)
+#now I join these columns to the main dataset and rename them
+df <- cbind(df, k)%>%cbind(m)%>%rename(abv_lit=k)%>%rename(abv_life=m)
+#and make a smaller and more manageable dataset
+df_1 <- df%>%select(country, rural_pop, urbn_pop, ref_perc, abv_lit, abv_life)
+```
+second set of eda
+```{r}
+ggplot(df_1, aes(rural_pop, ref_perc))+geom_point()+geom_smooth(se=FALSE, method='lm')
+ggplot(df_1, aes(urbn_pop, ref_perc))+geom_point()+geom_smooth(se=FALSE, method='lm')
+
+ggplot(df_1)+geom_boxplot(aes(factor(abv_lit), ref_perc))
+ggplot(df_1)+geom_boxplot(aes(factor(abv_life), ref_perc))
+
+```
+
+beginning to work on the shiny app
+```{r}
+ui <- fluidPage(
+  #title of the whole site
+  titlePanel("Refugee Data"),
+  #adding a sidebar layout
+  sidebarLayout(
+    #adding the actual sidebar
+    sidebarPanel(
+      textInput(inputId="name", "What's your name?"),
+  textOutput(outputId = "greeting"),
+  br(),
+  textInput(inputId = "title", "What should the title of this project be?"),
+  textOutput("title1"),
+  br(),
+  verbatimTextOutput("hover_text_u"),
+  verbatimTextOutput("hover_text_r")
+      #first input -- Which other variable to compare to refugee percent
+      #radioButtons(inputId="cont_var", "Variable for Comparison", c("Population Percentage Urban" = "urbn_pop", "Population Percentage Rural" = "rural_pop")),
+      #second input -- How many of the top inputs to remove
+      #radioButtons(inputId = "perc_rem", "What top percent of refugee population countries to remove:", c("None"=1, "1 percent or more"=0.01, "2.5 percent or more"=0.025, "5 percent or more"=0.05)),
+      #third input -- Which categorical variable to use
+      #radioButtons(inputId = "cat_var", "Categorical Variable to Use", c("Above average adult literacy"="abv_lit", "Above average life expectancy"="abv_life"))
+    ),
+    mainPanel(
+      tabsetPanel(type = "tabs",
+                  tabPanel("Regression Plot for Urban Population", plotOutput(outputId = "reg_plot_u", hover = hoverOpts(id="plot_hover_u"))),
+                  tabPanel("Regression Equation for Urban Population", verbatimTextOutput(outputId = "reg_eq_u")),
+                  tabPanel("Regression Plot for Rural Population", plotOutput(outputId = "reg_plot_r", hover = hoverOpts(id="plot_hover_r"))),
+                  tabPanel("Regression Equation of Rural Population", verbatimTextOutput(outputId = "reg_eq_r")),
+                  tabPanel("Box-Plot of Life Expectancy", plotOutput(outputId = "box_plot")),
+                  #tabPanel("Removed", tableOutput(outputId = "removed_rows")),
+                  tabPanel("Inferential Statistics", verbatimTextOutput(outputId = "inf_stat"))
+      )
+    )
+  )
+)
+
+server <- function(input, output, session){
+  output$reg_plot_u <- renderPlot({
+    ggplot(df, aes(x=urbn_pop, y=ref_perc))+geom_point()+geom_smooth(method="lm", se=FALSE)+xlab("Percent of Population in Urban Areas")+ylab("Percent of Population Made Up of Refugees")+stat_regline_equation()+labs(subtitle = "We fail to reject the hypothesis that there is no relationship between these two variables")
+  })
+  output$reg_plot_r <- renderPlot({
+    ggplot(df, aes(x=rural_pop, y=ref_perc))+geom_point()+geom_smooth(method="lm", se=FALSE)+xlab("Percent of Populaiton in Rural Areas")+ylab("Percent of Population Made Up of Refugees")+stat_regline_equation()+labs(subtitle = "We fail to reject the hypothesis that there is no relationship between these two variables")
+  })
+  output$reg_eq_u <- renderPrint({
+    reg_u <- lm(df$ref_perc ~ df$urbn_pop)
+    summary(reg_u)
+  })
+  output$reg_eq_r <- renderPrint({
+    reg_r <- lm(df$ref_perc ~ df$rural_pop)
+    summary(reg_r)
+  })
+  output$box_plot <- renderPlot({
+    ggplot(df)+geom_boxplot(aes(factor(abv_life), ref_perc), outlier.shape = NA)+scale_y_continuous(limits = c(0,0.025))+xlab("Above Average Life Expectancy (1=above, 0=below)")+ylab("Percent of Population Made Up of Refugees")
+  })
+  output$inf_stat <- renderPrint({
+    print("T test for comparing if refugee populations are similar between population life expectancies. The two groups are NOT significantly different.")
+    t.test(df$ref_perc~df$abv_life, mu=0, alt="two.sided", var.eq=F)
+  })
+  output$greeting <- renderText({
+    paste0("Hello ", input$name, "!")
+  })
+  output$title1 <- renderText({
+    paste0("The title of this project is: ", input$title)
+  })
+  output$hover_text_u <- renderPrint({
+    if(!is.null(input$plot_hover_u)){
+            hover=input$plot_hover_u
+            paste0(df$urbn_pop, ",", df$ref_perc)
+        }
+  })
+  output$hover_text_r <- renderPrint({
+    if(!is.null(input$plot_hover_r)){
+            hover=input$plot_hover_r
+            paste0(df$rural_pop, ",", df$ref_perc)
+        }
+  })
+  
+}
+
+#server <- function(input, output, session){
+ # output$reg_plot <- renderPlot({
+  #  df%>%ggplot(aes(x=input$cont_var, y=ref_perc))+geom_point()
+#  })
+#}
+
+
+shinyApp(ui=ui, server=server)
+
+
+```
+
+
+
+
+
